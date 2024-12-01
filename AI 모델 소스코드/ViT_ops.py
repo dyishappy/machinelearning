@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import random_split
 from torchvision import datasets, transforms
 from transformers import ViTForImageClassification
 import pandas as pd
@@ -25,72 +25,38 @@ def set_seed(seed):
 set_seed(seed)
 
 class ImportData:
-    def __init__(self, source_path, processed_path, train_ratio=0.8):
-        self.source_path = source_path
-        self.processed_path = processed_path
-        self.train_ratio = train_ratio
-
-        self.train_path = os.path.join(processed_path, 'train')
-        self.val_path = os.path.join(processed_path, 'test')
-
-        # 자동으로 데이터셋을 나눔
-        self.preprocess_data()
-
-    def preprocess_data(self):
-        if os.path.exists(self.train_path) and os.path.exists(self.val_path):
-            print("Train/Test 데이터셋이 이미 준비되어 있습니다.")
-            return
-
-        print("데이터를 전처리하고 Train/Test로 나눕니다...")
-        os.makedirs(self.train_path, exist_ok=True)
-        os.makedirs(self.val_path, exist_ok=True)
-
-        classes = os.listdir(self.source_path)
-        for class_name in classes:
-            class_dir = os.path.join(self.source_path, class_name)
-            if not os.path.isdir(class_dir):
-                continue
-
-            images = os.listdir(class_dir)
-            random.shuffle(images)
-
-            train_count = int(len(images) * self.train_ratio)
-            train_images = images[:train_count]
-            val_images = images[train_count:]
-
-            train_class_dir = os.path.join(self.train_path, class_name)
-            val_class_dir = os.path.join(self.val_path, class_name)
-
-            os.makedirs(train_class_dir, exist_ok=True)
-            os.makedirs(val_class_dir, exist_ok=True)
-
-            for img in train_images:
-                src = os.path.join(class_dir, img)
-                dst = os.path.join(train_class_dir, img)
-                copyfile(src, dst)
-
-            for img in val_images:
-                src = os.path.join(class_dir, img)
-                dst = os.path.join(val_class_dir, img)
-                copyfile(src, dst)
-
-        print(f"데이터셋 준비 완료: {self.train_path}, {self.val_path}")
-
-    def get_data_loaders(self, batch_size=8):
-        transform = transforms.Compose([
-            transforms.Resize((224, 224)),
+    def __init__(self, data_path):
+        self.data_path = data_path
+        self.train_transform = transforms.Compose([
+            transforms.RandomResizedCrop(224),
             transforms.RandomHorizontalFlip(),
             transforms.RandomRotation(20),
+            transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1),
             transforms.ToTensor(),
-            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
-        train_dataset = datasets.ImageFolder(self.train_path, transform=transform)
-        val_dataset = datasets.ImageFolder(self.val_path, transform=transform)
+        self.test_transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
+    def load_data(self):
+        # Load the entire dataset with ImageFolder
+        full_dataset = datasets.ImageFolder(root=self.data_path, transform=self.train_transform)
+        
+        # Calculate sizes for train and test splits
+        total_size = len(full_dataset)
+        train_size = int(total_size * 0.8)  # 80% for training
+        test_size = total_size - train_size  # 20% for testing
 
-        return train_loader, val_loader, len(train_dataset.classes)
+        # Split the dataset
+        train_dataset, test_dataset = random_split(full_dataset, [train_size, test_size])
+        
+        # Apply test transform separately
+        test_dataset.dataset.transform = self.test_transform
+
+        return train_dataset, test_dataset
 
 class LoadModel:
     def __init__(self, num_classes):
